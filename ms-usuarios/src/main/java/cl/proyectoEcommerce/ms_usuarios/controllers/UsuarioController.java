@@ -34,7 +34,8 @@ public class UsuarioController {
 
         String azureOid = jwt.getClaimAsString("oid");
         usuario.setAzureOid(azureOid);
-        // Punto 2: el rol NUNCA viene del cliente, se fuerza aquí
+        
+        // El rol inicial asignado localmente en la base de datos siempre es CLIENTE
         usuario.setRol("CLIENTE");
 
         Usuario nuevoUsuario = usuarioService.registrarUsuario(usuario);
@@ -53,7 +54,7 @@ public class UsuarioController {
                     .body("No tienes permiso para modificar este usuario.");
         }
 
-        // Un CLIENTE no puede auto-asignarse otro rol al editar su perfil
+        // Si el usuario no es ADMIN en BD, se conserva el rol previo para evitar escalación
         if (!esAdmin(jwt)) {
             usuario.setRol(objetivo.getRol());
         }
@@ -91,7 +92,6 @@ public class UsuarioController {
         return new ResponseEntity<>(usuario, HttpStatus.OK);
     }
 
-    // Solo ADMIN puede listar a todos
     @GetMapping
     public ResponseEntity<?> obtenerTodos(@AuthenticationPrincipal Jwt jwt) {
         if (!esAdmin(jwt)) {
@@ -102,7 +102,7 @@ public class UsuarioController {
         return new ResponseEntity<>(usuarios, HttpStatus.OK);
     }
 
-    // --- Helpers de autorización ---
+    // --- Métodos Auxiliares de Autorización ---
 
     private boolean esPropioOAdmin(Jwt jwt, Usuario objetivo) {
         String oid = jwt.getClaimAsString("oid");
@@ -111,10 +111,14 @@ public class UsuarioController {
     }
 
     private boolean esAdmin(Jwt jwt) {
-        // Ajusta esto a como realmente representes roles en tu sistema.
-        // Opción simple: mirar el rol guardado en tu BD, no en el JWT
-        // (más abajo te explico por qué). Placeholder aquí:
-        List<String> roles = jwt.getClaimAsStringList("roles");
-        return roles != null && roles.contains("ADMIN");
+        String azureOid = jwt.getClaimAsString("oid");
+        if (azureOid == null) {
+            return false;
+        }
+
+        // Consulta en PostgreSQL el rol del usuario utilizando su Azure OID
+        return usuarioService.obtenerPorAzureOid(azureOid)
+                .map(u -> "ADMIN".equalsIgnoreCase(u.getRol()))
+                .orElse(false);
     }
 }
