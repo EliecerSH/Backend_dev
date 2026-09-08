@@ -16,7 +16,7 @@ public class ProductoController {
 
     private final ProductoService productoService;
 
-    // Inyección de dependencias por constructor sin Lombok
+    // Inyección de dependencias por constructor
     public ProductoController(ProductoService productoService) {
         this.productoService = productoService;
     }
@@ -44,7 +44,7 @@ public class ProductoController {
         return ResponseEntity.ok(productos);
     }
 
-    // --- ENDPOINTS PROTEGIDOS (REQUIEREN JWT BEARER TOKEN) ---
+    // --- ENDPOINTS PROTEGIDOS (REQUIEREN JWT BEARER TOKEN DE AZURE) ---
 
     // POST /api/v1/productos -> Crear un nuevo producto
     @PostMapping
