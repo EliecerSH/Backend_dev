@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   ms-usuarios:
     image: ${ECR_REGISTRY}/ms-usuarios:latest
