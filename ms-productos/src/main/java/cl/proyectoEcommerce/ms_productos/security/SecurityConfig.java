@@ -12,9 +12,6 @@ import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.cors.CorsConfigurationSource;
-import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
@@ -24,30 +21,30 @@ public class SecurityConfig {
 
     private final String tenantId;
     private final String clientId;
-    private final List<String> allowedOrigins;
 
     public SecurityConfig(
             @Value("${spring.security.oauth2.resourceserver.jwt.tenant-id}") String tenantId,
-            @Value("${spring.security.oauth2.resourceserver.jwt.client-id}") String clientId,
-            @Value("${cors.allowed-origins}") List<String> allowedOrigins) {
+            @Value("${spring.security.oauth2.resourceserver.jwt.client-id}") String clientId) {
         this.tenantId = tenantId;
         this.clientId = clientId;
-        this.allowedOrigins = allowedOrigins;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                // Desactivado en el microservicio: El API Gateway gestiona CORS completamente
+                .cors(cors -> cors.disable())
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
+                        // Peticiones Preflight de CORS
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // Swagger y endpoints de sistema
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/error").permitAll()
 
-                        // Lectura pública
+                        // Endpoints Públicos (Lectura)
                         .requestMatchers(HttpMethod.GET, "/api/v1/productos/**").permitAll()
 
-                        // Escritura protegida
+                        // Endpoints Protegidos (Escritura / Modificación)
                         .requestMatchers(HttpMethod.POST, "/api/v1/productos/**").authenticated()
                         .requestMatchers(HttpMethod.PUT, "/api/v1/productos/**").authenticated()
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/productos/**").authenticated()
@@ -62,28 +59,19 @@ public class SecurityConfig {
     }
 
     @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(allowedOrigins);
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
-        configuration.setAllowCredentials(true);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", configuration);
-        return source;
-    }
-
-    @Bean
     public JwtDecoder jwtDecoder() {
+        // Endpoint v2.0 de Azure AD para la recuperación de llaves JWKS (con caché LRU interna por Nimbus)
         String jwkSetUri = "https://login.microsoftonline.com/" + tenantId + "/discovery/v2.0/keys";
         NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
 
+        // 1. Validador de expiración y vigencia temporal
         OAuth2TokenValidator<Jwt> withTimestamp = new JwtTimestampValidator();
 
+        // 2. Validador flexible de Issuer (soporta v2.0 y sts.windows.net)
         OAuth2TokenValidator<Jwt> issuerValidator = jwt -> {
             String issuer = jwt.getIssuer() != null ? jwt.getIssuer().toString() : "";
-            if (issuer.contains(tenantId)) {
+            if (issuer.equals("https://login.microsoftonline.com/" + tenantId + "/v2.0") ||
+                    issuer.equals("https://sts.windows.net/" + tenantId + "/")) {
                 return OAuth2TokenValidatorResult.success();
             }
             return OAuth2TokenValidatorResult.failure(
@@ -91,16 +79,18 @@ public class SecurityConfig {
             );
         };
 
+        // 3. Validador estricto de Audiencia (verifica que pertenezca a la aplicación cliente registrada)
         OAuth2TokenValidator<Jwt> audienceValidator = jwt -> {
             List<String> audience = jwt.getAudience();
-            if (audience != null && !audience.isEmpty()) {
+            if (audience != null && (audience.contains(clientId) || audience.contains("api://" + clientId))) {
                 return OAuth2TokenValidatorResult.success();
             }
             return OAuth2TokenValidatorResult.failure(
-                    new OAuth2Error("invalid_audience", "La audiencia del token no coincide.", null)
+                    new OAuth2Error("invalid_audience", "La audiencia del token no coincide con este microservicio.", null)
             );
         };
 
+        // Enlace de los validadores
         jwtDecoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(withTimestamp, issuerValidator, audienceValidator));
 
         return jwtDecoder;
