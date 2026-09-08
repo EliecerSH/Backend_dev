@@ -1,68 +1,91 @@
-package cl.proyectoEcommerce.ms_carrito.controllers;
+package cl.proyectoEcommerce.ms_carrito.security;
 
-import cl.proyectoEcommerce.ms_carrito.dto.AgregarItemRequestDTO;
-import cl.proyectoEcommerce.ms_carrito.dto.CarritoResponseDTO;
-import cl.proyectoEcommerce.ms_carrito.services.CarritoService;
-import jakarta.validation.Valid;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
+import org.springframework.security.oauth2.jwt.*;
+import org.springframework.security.web.SecurityFilterChain;
 
-@RestController
-@RequestMapping("/api/v1/carrito")
-public class CarritoController {
+import java.util.List;
 
-    private final CarritoService carritoService;
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
 
-    // Inyección de dependencias por constructor sin Lombok
-    public CarritoController(CarritoService carritoService) {
-        this.carritoService = carritoService;
+    private final String tenantId;
+    private final String clientId;
+
+    public SecurityConfig(
+            @Value("${spring.security.oauth2.resourceserver.jwt.tenant-id}") String tenantId,
+            @Value("${spring.security.oauth2.resourceserver.jwt.client-id}") String clientId) {
+        this.tenantId = tenantId;
+        this.clientId = clientId;
     }
 
-    // GET /api/v1/carrito -> Obtener el carrito del usuario autenticado
-    @GetMapping
-    public ResponseEntity<CarritoResponseDTO> obtenerCarrito(@AuthenticationPrincipal Jwt jwt) {
-        String usuarioOid = extraerUsuarioOid(jwt);
-        CarritoResponseDTO carrito = carritoService.obtenerOcrearCarrito(usuarioOid);
-        return ResponseEntity.ok(carrito);
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+                // Desactivado en el microservicio: El API Gateway gestiona CORS completamente
+                .cors(cors -> cors.disable())
+                .csrf(csrf -> csrf.disable())
+                .authorizeHttpRequests(auth -> auth
+                        // Peticiones Preflight de CORS
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // Swagger y endpoints de sistema
+                        .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/error").permitAll()
+                        // Todos los endpoints de carrito requieren token JWT válido
+                        .requestMatchers("/api/v1/carrito/**").authenticated()
+                        .anyRequest().authenticated()
+                )
+                .oauth2ResourceServer(oauth2 ->
+                        oauth2.jwt(jwt -> jwt.decoder(jwtDecoder()))
+                );
+
+        return http.build();
     }
 
-    // POST /api/v1/carrito/items -> Agregar o actualizar la cantidad de un producto
-    @PostMapping("/items")
-    public ResponseEntity<CarritoResponseDTO> agregarProducto(
-            @AuthenticationPrincipal Jwt jwt,
-            @Valid @RequestBody AgregarItemRequestDTO request) {
-        String usuarioOid = extraerUsuarioOid(jwt);
-        CarritoResponseDTO carrito = carritoService.agregarProducto(usuarioOid, request);
-        return ResponseEntity.ok(carrito);
-    }
+    @Bean
+    public JwtDecoder jwtDecoder() {
+        // Endpoint v2.0 de Azure AD para claves JWKS (con caché LRU interna administrada por Nimbus)
+        String jwkSetUri = "https://login.microsoftonline.com/" + tenantId + "/discovery/v2.0/keys";
+        NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
 
-    // DELETE /api/v1/carrito/items/{productoId} -> Remover un producto específico
-    @DeleteMapping("/items/{productoId}")
-    public ResponseEntity<CarritoResponseDTO> eliminarProducto(
-            @AuthenticationPrincipal Jwt jwt,
-            @PathVariable Long productoId) {
-        String usuarioOid = extraerUsuarioOid(jwt);
-        CarritoResponseDTO carrito = carritoService.eliminarProducto(usuarioOid, productoId);
-        return ResponseEntity.ok(carrito);
-    }
+        // 1. Validador de expiración y vigencia temporal
+        OAuth2TokenValidator<Jwt> withTimestamp = new JwtTimestampValidator();
 
-    // DELETE /api/v1/carrito -> Vaciar el carrito completamente
-    @DeleteMapping
-    public ResponseEntity<Void> vaciarCarrito(@AuthenticationPrincipal Jwt jwt) {
-        String usuarioOid = extraerUsuarioOid(jwt);
-        carritoService.vaciarCarrito(usuarioOid);
-        return ResponseEntity.noContent().build();
-    }
+        // 2. Validador de Issuer (Acepta v2.0 y sts.windows.net)
+        OAuth2TokenValidator<Jwt> issuerValidator = jwt -> {
+            String issuer = jwt.getIssuer() != null ? jwt.getIssuer().toString() : "";
+            if (issuer.equals("https://login.microsoftonline.com/" + tenantId + "/v2.0") ||
+                    issuer.equals("https://sts.windows.net/" + tenantId + "/")) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            return OAuth2TokenValidatorResult.failure(
+                    new OAuth2Error("invalid_issuer", "El emisor del token '" + issuer + "' no es valido.", null)
+            );
+        };
 
-    // Método privado para extraer el OID (o fallback al 'sub' del token JWT de Azure)
-    private String extraerUsuarioOid(Jwt jwt) {
-        String oid = jwt.getClaimAsString("oid");
-        if (oid != null && !oid.isBlank()) {
-            return oid;
-        }
-        // Fallback al claim 'sub' si 'oid' no viene en tokens client_credentials
-        return jwt.getSubject();
+        // 3. Validador de Audiencia estricto (coincidencia con clientId o api://clientId)
+        OAuth2TokenValidator<Jwt> audienceValidator = jwt -> {
+            List<String> audience = jwt.getAudience();
+            if (audience != null && (audience.contains(clientId) || audience.contains("api://" + clientId))) {
+                return OAuth2TokenValidatorResult.success();
+            }
+            return OAuth2TokenValidatorResult.failure(
+                    new OAuth2Error("invalid_audience", "La audiencia del token no es valida para ms-carrito.", null)
+            );
+        };
+
+        // Enlace de los validadores
+        jwtDecoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(withTimestamp, issuerValidator, audienceValidator));
+
+        return jwtDecoder;
     }
 }
