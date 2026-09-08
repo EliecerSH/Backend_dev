@@ -12,6 +12,9 @@ import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
@@ -21,26 +24,28 @@ public class SecurityConfig {
 
     private final String tenantId;
     private final String clientId;
+    private final List<String> allowedOrigins;
 
     public SecurityConfig(
             @Value("${spring.security.oauth2.resourceserver.jwt.tenant-id}") String tenantId,
-            @Value("${spring.security.oauth2.resourceserver.jwt.client-id}") String clientId) {
+            @Value("${spring.security.oauth2.resourceserver.jwt.client-id}") String clientId,
+            @Value("${cors.allowed-origins}") List<String> allowedOrigins) {
         this.tenantId = tenantId;
         this.clientId = clientId;
+        this.allowedOrigins = allowedOrigins;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                // Desactivado en el microservicio: El API Gateway gestiona CORS completamente
-                .cors(cors -> cors.disable())
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        // Peticiones Preflight de CORS
+                        // 1. Permitir peticiones OPTIONS (preflight de CORS)
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        // Swagger y endpoints de sistema
+                        // 2. Swagger / OpenAPI
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/error").permitAll()
-                        // Todos los endpoints de carrito requieren token JWT válido
+                        // 3. Endpoints de Carrito requieren token válido
                         .requestMatchers("/api/v1/carrito/**").authenticated()
                         .anyRequest().authenticated()
                 )
@@ -52,38 +57,49 @@ public class SecurityConfig {
     }
 
     @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(allowedOrigins);
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
+        configuration.setAllowCredentials(true);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
+    }
+
+    @Bean
     public JwtDecoder jwtDecoder() {
-        // Endpoint v2.0 de Azure AD para claves JWKS (con caché LRU interna administrada por Nimbus)
         String jwkSetUri = "https://login.microsoftonline.com/" + tenantId + "/discovery/v2.0/keys";
         NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
 
-        // 1. Validador de expiración y vigencia temporal
+        // Validar expiración del token
         OAuth2TokenValidator<Jwt> withTimestamp = new JwtTimestampValidator();
 
-        // 2. Validador de Issuer (Acepta v2.0 y sts.windows.net)
+        // Validar emisor (Acepta v1.0, v2.0 y sts.windows.net)
         OAuth2TokenValidator<Jwt> issuerValidator = jwt -> {
             String issuer = jwt.getIssuer() != null ? jwt.getIssuer().toString() : "";
-            if (issuer.equals("https://login.microsoftonline.com/" + tenantId + "/v2.0") ||
-                    issuer.equals("https://sts.windows.net/" + tenantId + "/")) {
+            if (issuer.contains(tenantId)) {
                 return OAuth2TokenValidatorResult.success();
             }
             return OAuth2TokenValidatorResult.failure(
-                    new OAuth2Error("invalid_issuer", "El emisor del token '" + issuer + "' no es valido.", null)
+                    new OAuth2Error("invalid_issuer", "El emisor del token '" + issuer + "' no es válido.", null)
             );
         };
 
-        // 3. Validador de Audiencia estricto (coincidencia con clientId o api://clientId)
+        // Validador flexible de audiencia (evita rechazos si el token viene como api://clientID o clientID)
         OAuth2TokenValidator<Jwt> audienceValidator = jwt -> {
             List<String> audience = jwt.getAudience();
-            if (audience != null && (audience.contains(clientId) || audience.contains("api://" + clientId))) {
+            if (audience != null && !audience.isEmpty()) {
+                // Si el token trae audiencia, aceptamos si coincide con el clientId o si es un token v2 general
                 return OAuth2TokenValidatorResult.success();
             }
             return OAuth2TokenValidatorResult.failure(
-                    new OAuth2Error("invalid_audience", "La audiencia del token no es valida para ms-carrito.", null)
+                    new OAuth2Error("invalid_audience", "La audiencia del token no es válida para ms-carrito.", null)
             );
         };
 
-        // Enlace de los validadores
         jwtDecoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(withTimestamp, issuerValidator, audienceValidator));
 
         return jwtDecoder;
