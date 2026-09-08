@@ -12,9 +12,6 @@ import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.web.cors.CorsConfiguration;
-import org.springframework.web.cors.CorsConfigurationSource;
-import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
 
@@ -24,31 +21,29 @@ public class SecurityConfig {
 
     private final String tenantId;
     private final String clientId;
-    private final List<String> allowedOrigins;
 
     public SecurityConfig(
             @Value("${spring.security.oauth2.resourceserver.jwt.tenant-id}") String tenantId,
-            @Value("${spring.security.oauth2.resourceserver.jwt.client-id}") String clientId,
-            @Value("${cors.allowed-origins}") List<String> allowedOrigins) {
+            @Value("${spring.security.oauth2.resourceserver.jwt.client-id}") String clientId) {
         this.tenantId = tenantId;
         this.clientId = clientId;
-        this.allowedOrigins = allowedOrigins;
     }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                // Desactivado en el microservicio: El API Gateway maneja las cabeceras CORS
+                .cors(cors -> cors.disable())
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        // 1. Permitir peticiones OPTIONS (preflight de CORS)
+                        // Peticiones de verificación previas (Preflight)
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        // 2. Swagger / OpenAPI / Endpoints públicos
+                        // Endpoints públicos y documentación Swagger
                         .requestMatchers("/api/v1/public/**", "/swagger-ui/**", "/v3/api-docs/**", "/error").permitAll()
-                        // 3. Demás peticiones requieren autenticación
+                        // Todo lo demás requiere un JWT válido de Azure
                         .anyRequest().authenticated()
                 )
-                .oauth2ResourceServer(oauth2 ->
+                .oauth2ResourceServer(oauth2 -> 
                         oauth2.jwt(jwt -> jwt.decoder(jwtDecoder()))
                 );
 
@@ -56,28 +51,15 @@ public class SecurityConfig {
     }
 
     @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(allowedOrigins);
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
-        configuration.setAllowCredentials(true);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", configuration);
-        return source;
-    }
-
-    @Bean
     public JwtDecoder jwtDecoder() {
-        // Obtenemos las claves del endpoint global v2.0 de Azure AD
+        // Endpoint global v2.0 de llaves JWKS de Azure AD (Nimbus maneja automáticamente el caché LRU)
         String jwkSetUri = "https://login.microsoftonline.com/" + tenantId + "/discovery/v2.0/keys";
         NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
 
-        // 1. Validar expiración y tiempo activo del token
+        // 1. Validador de tiempo (expiración y tiempo activo)
         OAuth2TokenValidator<Jwt> withTimestamp = new JwtTimestampValidator();
 
-        // 2. Validador flexible de Issuer (Permite tanto v2.0 como sts.windows.net)
+        // 2. Validador flexible de Issuer (Acepta endpoints v2.0 y v1.0 sts.windows.net)
         OAuth2TokenValidator<Jwt> issuerValidator = jwt -> {
             String issuer = jwt.getIssuer() != null ? jwt.getIssuer().toString() : "";
             if (issuer.equals("https://login.microsoftonline.com/" + tenantId + "/v2.0") ||
@@ -100,7 +82,7 @@ public class SecurityConfig {
             );
         };
 
-        // Enlazar los 3 validadores
+        // Asignación de validadores en cadena
         jwtDecoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(withTimestamp, issuerValidator, audienceValidator));
 
         return jwtDecoder;
