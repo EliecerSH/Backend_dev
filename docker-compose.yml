@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  ms-usuarios:
+    image: ${ECR_REGISTRY}/ms-usuarios:latest
+    container_name: ecommerce-ms-usuarios
+    ports:
+      - "8081:8081"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    networks:
+      - ecommerce-network
+    environment:
+      SERVER_PORT: 8081
+      SPRING_DATASOURCE_URL: ${DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      AZURE_ISSUER_URI: ${AZURE_ISSUER_URI}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+    restart: unless-stopped
+
+  ms-productos:
+    image: ${ECR_REGISTRY}/ms-productos:latest
+    container_name: ecommerce-ms-productos
+    ports:
+      - "8082:8082"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    networks:
+      - ecommerce-network
+    environment:
+      SERVER_PORT: 8082
+      SPRING_DATASOURCE_URL: ${DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      AZURE_ISSUER_URI: ${AZURE_ISSUER_URI}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+    restart: unless-stopped
+
+  ms-carrito:
+    image: ${ECR_REGISTRY}/ms-carrito:latest
+    container_name: ecommerce-ms-carrito
+    ports:
+      - "8083:8083"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    networks:
+      - ecommerce-network
+    environment:
+      SERVER_PORT: 8083
+      SPRING_DATASOURCE_URL: ${DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      AZURE_ISSUER_URI: ${AZURE_ISSUER_URI}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID}
+      PRODUCTOS_SERVICE_URL: ${PRODUCTOS_SERVICE_URL}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+    restart: unless-stopped
+
+networks:
+  ecommerce-network:
+    external: true
