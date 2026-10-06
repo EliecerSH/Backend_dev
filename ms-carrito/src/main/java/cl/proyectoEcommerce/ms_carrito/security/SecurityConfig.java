@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
@@ -11,6 +12,8 @@ import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.*;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -20,6 +23,7 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity 
 public class SecurityConfig {
 
     private final String tenantId;
@@ -41,19 +45,31 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        // 1. Permitir peticiones OPTIONS (preflight de CORS)
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        // 2. Swagger / OpenAPI
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/error").permitAll()
-                        // 3. Endpoints de Carrito requieren token válido
+                        // Carrito: token válido; el rol lo exige @PreAuthorize en el controller
                         .requestMatchers("/api/v1/carrito/**").authenticated()
                         .anyRequest().authenticated()
                 )
-                .oauth2ResourceServer(oauth2 ->
-                        oauth2.jwt(jwt -> jwt.decoder(jwtDecoder()))
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(jwt -> jwt
+                                .decoder(jwtDecoder())
+                                .jwtAuthenticationConverter(jwtAuthenticationConverter())
+                        )
                 );
 
         return http.build();
+    }
+
+    @Bean
+    public JwtAuthenticationConverter jwtAuthenticationConverter() {
+        JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
+        authorities.setAuthoritiesClaimName("roles");
+        authorities.setAuthorityPrefix("ROLE_");
+
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(authorities);
+        return converter;
     }
 
     @Bean
@@ -74,13 +90,13 @@ public class SecurityConfig {
         String jwkSetUri = "https://login.microsoftonline.com/" + tenantId + "/discovery/v2.0/keys";
         NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
 
-        // Validar expiración del token
         OAuth2TokenValidator<Jwt> withTimestamp = new JwtTimestampValidator();
 
-        // Validar emisor (Acepta v1.0, v2.0 y sts.windows.net)
+        // Issuer exacto (v2.0 o sts.windows.net) en vez de "contains"
         OAuth2TokenValidator<Jwt> issuerValidator = jwt -> {
             String issuer = jwt.getIssuer() != null ? jwt.getIssuer().toString() : "";
-            if (issuer.contains(tenantId)) {
+            if (issuer.equals("https://login.microsoftonline.com/" + tenantId + "/v2.0") ||
+                    issuer.equals("https://sts.windows.net/" + tenantId + "/")) {
                 return OAuth2TokenValidatorResult.success();
             }
             return OAuth2TokenValidatorResult.failure(
@@ -88,11 +104,10 @@ public class SecurityConfig {
             );
         };
 
-        // Validador flexible de audiencia (evita rechazos si el token viene como api://clientID o clientID)
+        // La audiencia debe ser ESTA API (clientId o api://clientId)
         OAuth2TokenValidator<Jwt> audienceValidator = jwt -> {
             List<String> audience = jwt.getAudience();
-            if (audience != null && !audience.isEmpty()) {
-                // Si el token trae audiencia, aceptamos si coincide con el clientId o si es un token v2 general
+            if (audience != null && (audience.contains(clientId) || audience.contains("api://" + clientId))) {
                 return OAuth2TokenValidatorResult.success();
             }
             return OAuth2TokenValidatorResult.failure(
