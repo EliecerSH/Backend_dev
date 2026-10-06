@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
@@ -11,6 +12,8 @@ import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.*;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -20,6 +23,7 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity // habilita @PreAuthorize
 public class SecurityConfig {
 
     private final String tenantId;
@@ -47,18 +51,33 @@ public class SecurityConfig {
                         // Lectura pública
                         .requestMatchers(HttpMethod.GET, "/api/v1/productos/**").permitAll()
 
-                        // Escritura protegida
+                        // Escritura: requiere token; el rol Admin lo exige @PreAuthorize en el controller
                         .requestMatchers(HttpMethod.POST, "/api/v1/productos/**").authenticated()
                         .requestMatchers(HttpMethod.PUT, "/api/v1/productos/**").authenticated()
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/productos/**").authenticated()
 
                         .anyRequest().authenticated()
                 )
-                .oauth2ResourceServer(oauth2 ->
-                        oauth2.jwt(jwt -> jwt.decoder(jwtDecoder()))
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(jwt -> jwt
+                                .decoder(jwtDecoder())
+                                .jwtAuthenticationConverter(jwtAuthenticationConverter())
+                        )
                 );
 
         return http.build();
+    }
+
+    // Convierte el claim "roles" de Entra ID en ROLE_Admin / ROLE_User
+    @Bean
+    public JwtAuthenticationConverter jwtAuthenticationConverter() {
+        JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
+        authorities.setAuthoritiesClaimName("roles");
+        authorities.setAuthorityPrefix("ROLE_");
+
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(authorities);
+        return converter;
     }
 
     @Bean
@@ -81,9 +100,11 @@ public class SecurityConfig {
 
         OAuth2TokenValidator<Jwt> withTimestamp = new JwtTimestampValidator();
 
+        // Issuer exacto (v2.0 o sts.windows.net) en vez de "contains"
         OAuth2TokenValidator<Jwt> issuerValidator = jwt -> {
             String issuer = jwt.getIssuer() != null ? jwt.getIssuer().toString() : "";
-            if (issuer.contains(tenantId)) {
+            if (issuer.equals("https://login.microsoftonline.com/" + tenantId + "/v2.0") ||
+                    issuer.equals("https://sts.windows.net/" + tenantId + "/")) {
                 return OAuth2TokenValidatorResult.success();
             }
             return OAuth2TokenValidatorResult.failure(
@@ -91,13 +112,14 @@ public class SecurityConfig {
             );
         };
 
+        // La audiencia debe ser ESTA API, no cualquiera
         OAuth2TokenValidator<Jwt> audienceValidator = jwt -> {
             List<String> audience = jwt.getAudience();
-            if (audience != null && !audience.isEmpty()) {
+            if (audience != null && (audience.contains(clientId) || audience.contains("api://" + clientId))) {
                 return OAuth2TokenValidatorResult.success();
             }
             return OAuth2TokenValidatorResult.failure(
-                    new OAuth2Error("invalid_audience", "La audiencia del token no coincide.", null)
+                    new OAuth2Error("invalid_audience", "La audiencia del token no coincide con esta API.", null)
             );
         };
 

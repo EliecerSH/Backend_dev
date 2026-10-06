@@ -6,6 +6,7 @@ import cl.proyectoEcommerce.ms_productos.services.ProductoService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -16,54 +17,46 @@ public class ProductoController {
 
     private final ProductoService productoService;
 
-    // Inyección de dependencias por constructor sin Lombok
     public ProductoController(ProductoService productoService) {
         this.productoService = productoService;
     }
 
     // --- ENDPOINTS PÚBLICOS (LECTURA) ---
 
-    // GET /api/v1/productos -> Listar todos los productos
     @GetMapping
     public ResponseEntity<List<ProductoResponseDTO>> obtenerTodos() {
-        List<ProductoResponseDTO> productos = productoService.obtenerTodos();
-        return ResponseEntity.ok(productos);
+        return ResponseEntity.ok(productoService.obtenerTodos());
     }
 
-    // GET /api/v1/productos/{id} -> Obtener producto por ID
     @GetMapping("/{id}")
     public ResponseEntity<ProductoResponseDTO> obtenerPorId(@PathVariable Long id) {
-        ProductoResponseDTO producto = productoService.obtenerPorId(id);
-        return ResponseEntity.ok(producto);
+        return ResponseEntity.ok(productoService.obtenerPorId(id));
     }
 
-    // GET /api/v1/productos/categoria/{categoria} -> Buscar productos por categoría
     @GetMapping("/categoria/{categoria}")
     public ResponseEntity<List<ProductoResponseDTO>> obtenerPorCategoria(@PathVariable String categoria) {
-        List<ProductoResponseDTO> productos = productoService.obtenerPorCategoria(categoria);
-        return ResponseEntity.ok(productos);
+        return ResponseEntity.ok(productoService.obtenerPorCategoria(categoria));
     }
 
-    // --- ENDPOINTS PROTEGIDOS (REQUIEREN JWT BEARER TOKEN) ---
+    // --- ENDPOINTS PROTEGIDOS (SOLO ROL Admin) ---
 
-    // POST /api/v1/productos -> Crear un nuevo producto
     @PostMapping
+    @PreAuthorize("hasRole('Admin')")
     public ResponseEntity<ProductoResponseDTO> crearProducto(@Valid @RequestBody ProductoRequestDTO requestDTO) {
         ProductoResponseDTO nuevoProducto = productoService.crearProducto(requestDTO);
         return new ResponseEntity<>(nuevoProducto, HttpStatus.CREATED);
     }
 
-    // PUT /api/v1/productos/{id} -> Actualizar un producto existente
     @PutMapping("/{id}")
+    @PreAuthorize("hasRole('Admin')")
     public ResponseEntity<ProductoResponseDTO> actualizarProducto(
             @PathVariable Long id,
             @Valid @RequestBody ProductoRequestDTO requestDTO) {
-        ProductoResponseDTO productoActualizado = productoService.actualizarProducto(id, requestDTO);
-        return ResponseEntity.ok(productoActualizado);
+        return ResponseEntity.ok(productoService.actualizarProducto(id, requestDTO));
     }
 
-    // DELETE /api/v1/productos/{id} -> Eliminar un producto
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('Admin')")
     public ResponseEntity<Void> eliminarProducto(@PathVariable Long id) {
         productoService.eliminarProducto(id);
         return ResponseEntity.noContent().build();
