@@ -106,8 +106,17 @@ public class ProductoService {
             );
         }
 
-        producto.setStock(producto.getStock() - cantidad);
+        int stockAnterior = producto.getStock();
+
+        producto.setStock(stockAnterior - cantidad);
 
         productoRepository.save(producto);
+
+        System.out.println(
+                "STOCK DESCONTADO - productoId=" + productoId +
+                ", cantidad=" + cantidad +
+                ", stockAnterior=" + stockAnterior +
+                ", stockNuevo=" + producto.getStock()
+        );
     }
 }
