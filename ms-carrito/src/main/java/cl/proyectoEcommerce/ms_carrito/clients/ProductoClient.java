@@ -23,7 +23,7 @@ public class ProductoClient {
     @CircuitBreaker(name = "msProductos", fallbackMethod = "fallbackConsultarProducto")
     public ProductoClientDTO consultarProducto(Long productoId) {
         return restClient.get()
-                .uri("/api/v1/productos/{id}", productoId)
+                .uri("/{id}", productoId)
                 .retrieve()
                 .onStatus(status -> status.value() == 404, (req, resp) -> {
                     throw new ProductoNoEncontradoException(productoId);
