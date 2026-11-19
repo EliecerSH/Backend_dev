@@ -57,10 +57,11 @@ public class ProductoController {
     @PostMapping
     @PreAuthorize("hasRole('Admin')")
     public ResponseEntity<ProductoResponseDTO> crearProducto(
-            @Valid @RequestBody ProductoRequestDTO requestDTO) {
+            @Valid @RequestBody ProductoRequestDTO requestDTO,
+            @AuthenticationPrincipal Jwt jwt) {
 
         ProductoResponseDTO nuevoProducto =
-                productoService.crearProducto(requestDTO);
+                productoService.crearProducto(requestDTO, jwt.getClaimAsString("oid"));
 
         return new ResponseEntity<>(
                 nuevoProducto,
@@ -89,9 +90,10 @@ public class ProductoController {
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('Admin')")
     public ResponseEntity<Void> eliminarProducto(
-            @PathVariable Long id) {
+            @PathVariable Long id,
+            @AuthenticationPrincipal Jwt jwt) {
 
-        productoService.eliminarProducto(id);
+        productoService.eliminarProducto(id, jwt.getClaimAsString("oid"));
 
         return ResponseEntity.noContent().build();
     }

@@ -33,6 +33,15 @@ public class UsuarioController {
         return ResponseEntity.ok(jwt.getClaims());
     }
 
+    // Perfil del usuario autenticado, buscado por su OID de Azure.
+    // Antes el frontend dependía de un id guardado en localStorage: desde otro navegador el
+    // perfil "desaparecía" y al intentar registrarlo de nuevo fallaba.
+    @GetMapping("/me/perfil")
+    @PreAuthorize("hasAnyRole('Admin', 'User')")
+    public ResponseEntity<Usuario> obtenerMiPerfil(@AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok(usuarioService.obtenerPorAzureOid(jwt.getClaimAsString("oid")));
+    }
+
     @PostMapping
     @PreAuthorize("hasAnyRole('Admin', 'User')")
     public ResponseEntity<Usuario> registrarUsuario(

@@ -5,6 +5,8 @@ import cl.proyectoEcommerce.ms_carrito.dto.AgregarItemRequestDTO;
 import cl.proyectoEcommerce.ms_carrito.dto.CarritoItemResponseDTO;
 import cl.proyectoEcommerce.ms_carrito.dto.CarritoResponseDTO;
 import cl.proyectoEcommerce.ms_carrito.dto.ProductoClientDTO;
+import cl.proyectoEcommerce.ms_carrito.exceptions.ItemNoEncontradoException;
+import cl.proyectoEcommerce.ms_carrito.exceptions.StockInsuficienteException;
 import cl.proyectoEcommerce.ms_carrito.models.Carrito;
 import cl.proyectoEcommerce.ms_carrito.models.CarritoItem;
 import cl.proyectoEcommerce.ms_carrito.repositories.CarritoRepository;
@@ -42,7 +44,7 @@ public class CarritoService {
 
         // 2. Validar stock suficiente
         if (producto.stock() < request.cantidad()) {
-            throw new RuntimeException("Stock insuficiente. Disponible: " + producto.stock());
+            throw new StockInsuficienteException("Stock insuficiente. Disponible: " + producto.stock());
         }
 
         // 3. Buscar o crear el carrito del usuario
@@ -58,7 +60,8 @@ public class CarritoService {
             CarritoItem item = itemExistente.get();
             int nuevaCantidad = item.getCantidad() + request.cantidad();
             if (producto.stock() < nuevaCantidad) {
-                throw new RuntimeException("Stock insuficiente para sumar " + request.cantidad() + " unidades más.");
+                throw new StockInsuficienteException("Stock insuficiente para sumar " + request.cantidad()
+                        + " unidades más (disponible: " + producto.stock() + ", en tu carrito: " + item.getCantidad() + ").");
             }
             item.setCantidad(nuevaCantidad);
             item.setPrecioUnitario(producto.precio());
@@ -74,7 +77,7 @@ public class CarritoService {
     @Transactional
     public CarritoResponseDTO eliminarProducto(String usuarioOid, Long productoId) {
         Carrito carrito = carritoRepository.findByUsuarioOid(usuarioOid)
-                .orElseThrow(() -> new RuntimeException("Carrito no encontrado para el usuario."));
+                .orElseThrow(() -> new ItemNoEncontradoException("Carrito no encontrado para el usuario."));
 
         Optional<CarritoItem> itemAEliminar = carrito.getItems().stream()
                 .filter(item -> item.getProductoId().equals(productoId))
@@ -84,19 +87,20 @@ public class CarritoService {
             carrito.removerItem(itemAEliminar.get());
             carritoRepository.save(carrito);
         } else {
-            throw new RuntimeException("El producto con ID " + productoId + " no está en el carrito.");
+            throw new ItemNoEncontradoException("El producto con ID " + productoId + " no está en el carrito.");
         }
 
         return mapToResponseDTO(carrito);
     }
 
+    // Idempotente: vaciar un carrito inexistente o ya vacío no es un error (el frontend lo llama
+    // después de un pago aprobado, y antes respondía 500 si el carrito no existía).
     @Transactional
     public void vaciarCarrito(String usuarioOid) {
-        Carrito carrito = carritoRepository.findByUsuarioOid(usuarioOid)
-                .orElseThrow(() -> new RuntimeException("Carrito no encontrado para el usuario."));
-
-        carrito.getItems().clear();
-        carritoRepository.save(carrito);
+        carritoRepository.findByUsuarioOid(usuarioOid).ifPresent(carrito -> {
+            carrito.getItems().clear();
+            carritoRepository.save(carrito);
+        });
     }
 
     // OJO: el método privado consultarProducto() y el campo restClient

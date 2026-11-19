@@ -15,4 +15,6 @@ public interface UsuarioService {
     Usuario obtenerUsuario(Integer id);
 
     List<Usuario> obtenerTodosLosUsuarios();
+
+    Usuario obtenerPorAzureOid(String azureOid);
 }

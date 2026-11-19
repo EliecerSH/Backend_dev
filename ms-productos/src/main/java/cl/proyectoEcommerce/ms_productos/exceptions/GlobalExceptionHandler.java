@@ -3,6 +3,7 @@ package cl.proyectoEcommerce.ms_productos.exceptions;
 import cl.proyectoEcommerce.ms_productos.dto.ErrorResponseDTO;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -38,6 +39,18 @@ public class GlobalExceptionHandler {
                 ex.getMessage()
         );
         return new ResponseEntity<>(response, HttpStatus.NOT_FOUND);
+    }
+
+    // Sin este handler, un usuario sin rol Admin que intentaba crear/editar/eliminar un producto
+    // recibía 500 (lo capturaba el handler genérico de Exception) en vez de 403.
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ErrorResponseDTO> manejarAccesoDenegado(AccessDeniedException ex) {
+        ErrorResponseDTO response = new ErrorResponseDTO(
+                HttpStatus.FORBIDDEN.value(),
+                "Acceso Denegado",
+                "No tienes permisos para realizar esta acción."
+        );
+        return new ResponseEntity<>(response, HttpStatus.FORBIDDEN);
     }
 
     // Cualquier otra RuntimeException NO controlada -> 500, no 404
